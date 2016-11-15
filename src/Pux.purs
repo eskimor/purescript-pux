@@ -16,7 +16,7 @@ module Pux
   ) where
 
 import Prelude as Prelude
-import Control.Monad.Aff (Aff, launchAff, later)
+import Control.Monad.Aff (Aff, launchAff, later, forkAll)
 import Control.Monad.Aff.Unsafe (unsafeInterleaveAff)
 import Control.Monad.Eff (Eff)
 import Control.Monad.Eff.Class (liftEff)
@@ -26,7 +26,7 @@ import Data.Function.Uncurried (Fn3, runFn3)
 import Data.List (List(Nil), singleton, (:), reverse, fromFoldable)
 import Data.Maybe (fromJust)
 import Partial.Unsafe (unsafePartial)
-import Prelude (Unit, ($), (<<<), map, pure)
+import Prelude (Unit, ($), (<<<), map, pure, (*>), unit)
 import Pux.Html (Html)
 import React (ReactClass)
 import Signal (dropRepeats', Signal, (~>), mergeMany, foldp, runSignal)
@@ -60,11 +60,12 @@ start config = do
       stateSignal = dropRepeats' $ effModelSignal ~> _.state
       htmlSignal = stateSignal ~> \state ->
         (runFn3 render) (send actionChannel <<< singleton) (\a -> a) (config.view state)
-      mapAffect affect = launchAff $ unsafeInterleaveAff do
-        action <- later affect
+      mapAffect affect = do
+        action <- affect
         liftEff $ send actionChannel (singleton action)
-      effectsSignal = effModelSignal ~> map mapAffect <<< _.effects
-  runSignal $ effectsSignal ~> sequence_
+      launchAff' x = launchAff x *> pure unit
+      effectsSignal = effModelSignal ~> launchAff' <<< unsafeInterleaveAff <<< forkAll <<< map mapAffect <<< _.effects
+  runSignal effectsSignal
   pure $ { html: htmlSignal, state: stateSignal, actionChannel: actionChannel }
   where bind = Prelude.bind
 
